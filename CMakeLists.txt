@@ -1,4 +1,4 @@
-# Copyright (c) 2012-2018 LG Electronics, Inc.
+# Copyright (c) 2012-2023 LG Electronics, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,6 +23,22 @@ webos_modules_init(1 0 0 QUALIFIER RC3)
 webos_component(3 0 0)
 
 include(FindPkgConfig)
+include(CMakePrintHelpers)
+
+if(DAC_IMPLEMENTATION)
+    add_definitions(-DDAC_ENABLED)
+    set(WEBOS_SYSTEMD_USER "system")
+    set(WEBOS_SYSTEMD_GROUP "system")
+    message(STATUS "DAC ENABLED")
+else()
+    set(WEBOS_SYSTEMD_USER "root")
+    set(WEBOS_SYSTEMD_GROUP "root")
+    message(STATUS "DAC NOT ENABLED")
+endif()
+
+cmake_print_variables(DAC_IMPLEMENTATION)
+cmake_print_variables(WEBOS_SYSTEMD_USER)
+cmake_print_variables(WEBOS_SYSTEMD_GROUP)
 
 add_subdirectory(libluna-prefs)
 add_subdirectory(luna-prop)

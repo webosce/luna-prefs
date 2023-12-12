@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2020 LG Electronics, Inc.
+// Copyright (c) 2008-2023 LG Electronics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <syslog.h>
+#ifdef DAC_ENABLED
+#include <glib/gstdio.h>
+#endif
 
 #include <luna-service2/lunaservice.h>
 #include <lunaprefs.h>
@@ -75,6 +78,16 @@ static bool sUseSyslog = false;
     if ( LSErrorIsSet( lserrp ) ) {             \
         LSErrorFree( lserrp );                  \
     }
+
+#ifdef DAC_ENABLED
+#define SYSTEM_GID 2000
+#define DIR_MODE (S_IRGRP|S_IWGRP|S_IXGRP)
+#define FILE_MODE (S_IRGRP|S_IWGRP)
+typedef struct LPAppHandle_tmp {
+    gchar*   pPath;
+    sqlite3* pDb;
+} LPAppHandle_tmp;
+#endif
 
 static void
 term_handler( int signal )
@@ -512,6 +525,111 @@ onWhitelist( const char* key )
 
     return privilegedAccessAllowed;
 }
+
+#ifdef DAC_ENABLED
+int update_to_system_group(gchar *path, GFileTest flag) {
+    syslog(LOG_DEBUG, "update_to_system_group path: %s", path);
+    int err = 0;
+    if (!g_file_test(path, flag)) {
+        err = -1;
+        syslog(LOG_DEBUG,
+                "Skip update for path: %s invalid type of file/dir error: %s",
+                path, strerror(errno));
+        return err;
+    }
+    err = chown(path, -1, SYSTEM_GID);
+    if (err) {
+        syslog(LOG_DEBUG, "Failed to update group for the path: %s error: %s",
+                path, strerror(errno));
+        return err;
+    }
+    syslog(LOG_DEBUG, "updated group for the path: %s", path);
+
+    return err;
+}
+
+int update_permissions(gchar *file, bool is_dir) {
+    syslog(LOG_DEBUG, "update_permissions path: %s dir?%s", file, is_dir ? "true":"false");
+    GStatBuf statbuf;
+    int err = g_stat(file, &statbuf);
+    if (err) {
+        syslog(LOG_DEBUG, "gstat failed for the path: %s error: %s", file,
+                strerror(errno));
+        return err;
+    }
+    mode_t mode = statbuf.st_mode;
+    syslog(LOG_DEBUG, "update_permissions path: %s cur mode: %d", file, mode);
+    mode_t tmp_mode = is_dir ? DIR_MODE : FILE_MODE;
+    mode = mode | tmp_mode;
+    mode &= ~(S_IRWXO);
+    if (!is_dir)
+        mode &= ~(S_IXGRP);
+    err = chmod(file, mode);
+    if (err) {
+        syslog(LOG_DEBUG,
+                "Failed to update permissions for the path: %s error: %s", file,
+                strerror(errno));
+        return err;
+    }
+    syslog(LOG_DEBUG, "updated permissions for the path: %s new mode:%d", file, mode);
+    return err;
+}
+
+int update_group_n_permissions(LPAppHandle handle) {
+    syslog(LOG_DEBUG, "update_group_n_permissions");
+    int err = -1;
+    LPAppHandle_tmp *hndl = (LPAppHandle_tmp*) handle;
+    if (!hndl || !hndl->pPath) {
+        syslog(LOG_DEBUG, "lp app handle is null");
+        return err;
+    }
+
+    gchar *path = hndl->pPath;
+    syslog(LOG_DEBUG, "update_group_n_permissions path: %s", path);
+
+    GStatBuf statbuf;
+    err = g_stat(path, &statbuf);
+
+    if (err) {
+        syslog(LOG_DEBUG, "g_stat failed : %s", strerror(errno));
+        return err;
+    }
+
+    syslog(LOG_DEBUG,
+            "update_group_n_permissions path: %s actual uid:%zu gid:%zu", path,
+            statbuf.st_uid, statbuf.st_gid);
+    //Check if gid is not system
+    if (SYSTEM_GID != statbuf.st_gid) {
+        err = update_to_system_group(path, G_FILE_TEST_IS_DIR);
+        if (err)
+            return err;
+    }
+
+    err = update_permissions(path, true);
+    if (!err) {
+        gchar *file = g_strdup_printf("%s/prefsDB.sl", path);
+        err = update_to_system_group(file, G_FILE_TEST_EXISTS);
+        if (!err)
+            update_permissions(file, false);
+        g_free(file);
+    }
+    return err;
+}
+
+void update_journal_permissions(LPAppHandle handle) {
+    syslog(LOG_DEBUG, "update_journal_permissions");
+
+    LPAppHandle_tmp *hndl = (LPAppHandle_tmp*) handle;
+    if (!hndl || !hndl->pPath) {
+        syslog(LOG_DEBUG, "lp app handle is null");
+        return;
+    }
+
+    gchar *file = g_strdup_printf("%s/prefsDB.sl-journal", hndl->pPath);
+    (void) update_permissions(file, false);
+    g_free(file);
+}
+#endif
 
 void sysGetSomeObj_callback(LSHandle* sh, LSMessage* message, bool allowed)
 {
@@ -1107,7 +1225,15 @@ appGet_internal( LSHandle* sh, LSMessage* message, AppGetter getter, bool asObj 
         err = LPAppGetHandle( appId, &handle );
         if ( 0 != err ) goto error;
 
+#ifdef DAC_ENABLED
+        int update_failed = update_group_n_permissions(handle);
+#endif
         err = (*getter)( handle, &json );
+#ifdef DAC_ENABLED
+        if (update_failed)
+            update_group_n_permissions(handle);
+        update_journal_permissions(handle);
+#endif
         if ( 0 != err ) goto error;
 
         if ( asObj ) {
@@ -1527,7 +1653,15 @@ appGetValue( LSHandle* sh, LSMessage* message, void* user_data )
 
         err = LPAppGetHandle( appId, &handle );
         if ( 0 != err ) goto error;
+#ifdef DAC_ENABLED
+        int update_failed = update_group_n_permissions(handle);
+#endif
         err = LPAppCopyValue( handle, key, &value );
+#ifdef DAC_ENABLED
+        if (update_failed)
+            update_group_n_permissions(handle);
+        update_journal_permissions(handle);
+#endif
         if ( 0 != err ) goto err_with_handle;
         if ( !replyWithKeyValue( sh, message, &lserror, key, value ) ) goto err_with_handle;
         err = 0;
@@ -1643,9 +1777,17 @@ appSetValue( LSHandle* sh, LSMessage* message, void* user_data )
             LPAppHandle handle;
             if ((err = LPAppGetHandle( appIdString, &handle )) == LP_ERR_NONE)
             {
+#ifdef DAC_ENABLED
+                int update_failed = update_group_n_permissions(handle);
+#endif
                 gchar* valString = json_object_get_string( value );
                 if ( valString ) {
                     err = LPAppSetValue( handle, keyString, valString );
+#ifdef DAC_ENABLED
+                    if (update_failed)
+                        update_group_n_permissions(handle);
+                    update_journal_permissions(handle);
+#endif
                 } else {
                     err = LP_ERR_VALUENOTJSON;
                 }
@@ -1729,6 +1871,9 @@ appRemoveValue( LSHandle* sh, LSMessage* message, void* user_data )
         LPErr err = LPAppGetHandle( appId, &handle );
         if ( LP_ERR_NONE == err )
         {
+#ifdef DAC_ENABLED
+            int update_failed = update_group_n_permissions(handle);
+#endif
             err = LPAppRemoveValue( handle, key );
             if (LP_ERR_NONE == err)
             {
@@ -1738,6 +1883,11 @@ appRemoveValue( LSHandle* sh, LSMessage* message, void* user_data )
             {
                 errorReplyErr( sh, message, err );
             }
+#ifdef DAC_ENABLED
+            if (update_failed)
+                update_group_n_permissions(handle);
+            update_journal_permissions(handle);
+#endif
             (void)LPAppFreeHandle( handle, true );
         }
         else
@@ -1831,6 +1981,35 @@ preBackup( LSHandle* sh, LSMessage* message, void* user_data )
             errorText = "Unable to create backup file";
             break;
         }
+
+#ifdef DAC_ENABLED
+        if (g_file_test(backup_db_path, G_FILE_TEST_EXISTS)) {
+            if (chmod(backup_db_path, 0600)) {
+                syslog(LOG_DEBUG,
+                        "Failed to change permissions for db file %s: error: %s",
+                        backup_db_path, strerror(errno));
+            } else {
+                syslog(LOG_DEBUG, "change permissions for db file %s success",
+                        backup_db_path);
+            }
+        } else {
+            syslog(LOG_DEBUG,
+                    "backup_db_path = %s does not exists after backup",
+                    backup_db_path);
+        }
+        gchar *journal_path = g_strdup_printf("%s-journal", backup_db_path);
+        if (g_file_test(journal_path, G_FILE_TEST_EXISTS)) {
+            if (chmod(journal_path, 0600)) {
+                syslog(LOG_DEBUG,
+                        "Failed to change permissions for file %s: error: %s",
+                        journal_path, strerror(errno));
+            } else {
+                syslog(LOG_DEBUG, "change permissions for file %s success",
+                        journal_path);
+            }
+        }
+        g_free(journal_path);
+#endif
 
         // Add "files" array to reply for back compatibility
         struct json_object* files_json  = json_object_new_array();
@@ -2033,6 +2212,20 @@ postRestore( LSHandle* sh, LSMessage* message, void* user_data )
                 errorReplyStr( sh, message, "unable to restore preference db");
             else
                 successReply( sh, message );
+#ifdef DAC_ENABLED
+            gchar *journal_path = g_strdup_printf("%s-journal", final_path);
+            if (g_file_test(journal_path, G_FILE_TEST_EXISTS)) {
+                if (chmod(journal_path, 0600)) {
+                    syslog(LOG_DEBUG,
+                            "Failed to change permissions for file %s: error: %s",
+                            journal_path, strerror(errno));
+                } else {
+                    syslog(LOG_DEBUG, "change permissions for file %s success",
+                            journal_path);
+                }
+            }
+            g_free(journal_path);
+#endif
         }
 
     }
