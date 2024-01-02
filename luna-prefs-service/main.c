@@ -596,7 +596,7 @@ int update_group_n_permissions(LPAppHandle handle) {
     }
 
     syslog(LOG_DEBUG,
-            "update_group_n_permissions path: %s actual uid:%zu gid:%zu", path,
+            "update_group_n_permissions path: %s actual uid:%u gid:%u", path,
             statbuf.st_uid, statbuf.st_gid);
     //Check if gid is not system
     if (SYSTEM_GID != statbuf.st_gid) {
