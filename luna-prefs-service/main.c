@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2023 LG Electronics, Inc.
+// Copyright (c) 2008-2024 LG Electronics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -1217,6 +1217,7 @@ appGet_internal( LSHandle* sh, LSMessage* message, AppGetter getter, bool asObj 
     LPErr err = LP_ERR_NONE;
     gchar* appId = NULL;
     struct json_object* json = NULL;
+    int update_failed = -1;
     LPAppHandle handle = NULL;
 
     if ( parseMessage( message,
@@ -1226,7 +1227,7 @@ appGet_internal( LSHandle* sh, LSMessage* message, AppGetter getter, bool asObj 
         if ( 0 != err ) goto error;
 
 #ifdef DAC_ENABLED
-        int update_failed = update_group_n_permissions(handle);
+        update_failed = update_group_n_permissions(handle);
 #endif
         err = (*getter)( handle, &json );
 #ifdef DAC_ENABLED
@@ -1637,6 +1638,7 @@ appGetValue( LSHandle* sh, LSMessage* message, void* user_data )
     g_debug( "%s(%s)", __func__, LSMessageGetPayload(message) );
     reset_timer();
 
+    int update_failed = -1;
     LPErr err = -1;           /* not 0 */
 
     gchar* appId = NULL;
@@ -1654,7 +1656,7 @@ appGetValue( LSHandle* sh, LSMessage* message, void* user_data )
         err = LPAppGetHandle( appId, &handle );
         if ( 0 != err ) goto error;
 #ifdef DAC_ENABLED
-        int update_failed = update_group_n_permissions(handle);
+        update_failed = update_group_n_permissions(handle);
 #endif
         err = LPAppCopyValue( handle, key, &value );
 #ifdef DAC_ENABLED
