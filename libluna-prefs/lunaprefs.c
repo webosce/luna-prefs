@@ -1,4 +1,4 @@
-// Copyright (c) 2008-2023 LG Electronics, Inc.
+// Copyright (c) 2008-2024 LG Electronics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/vfs.h>
-
 #include <json.h>
 #include <nyx/nyx_client.h>
 /* todo:
@@ -758,15 +757,19 @@ figureDiskCapacity( char** jstr )
     LPErr err = LP_ERR_SYSCONFIG;
     /* current format has line ending in mmcblk0, but let's allow for some
        whitespace should the formatting change. */
-    FILE* file = popen( "grep 'mmcblk0\\s*$' /proc/partitions", "r" );
-    if ( file )
+    gchar *out = NULL;
+    gchar *cmd[] = {"sh", "-c", "grep 'mmcblk0\s*$' /proc/partitions", NULL};
+    g_spawn_sync(NULL, cmd, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
+                          &out, NULL, NULL, NULL);
+
+    if ( out != NULL )
     {
         int major, minor;
         long long unsigned nBlocks;
         char name[64];             /* change format specifiers if sizes changed!! */
 
         // added 32-bit numeric widths to deal with static analizer
-        int nRead = fscanf( file, "%10d%10d%20llu%63s", &major, &minor, &nBlocks, name );
+        int nRead = sscanf( out, "%10d%10d%20llu%63s", &major, &minor, &nBlocks, name );
         if ( 4 == nRead ) {
                 if (nBlocks <= ULLONG_MAX / 1024) {
                         nBlocks *= 1024;
@@ -774,8 +777,6 @@ figureDiskCapacity( char** jstr )
                         err = LP_ERR_NONE;
                 }
         }
-
-        pclose( file );
     }
     return err;
 }
