@@ -758,7 +758,7 @@ figureDiskCapacity( char** jstr )
     /* current format has line ending in mmcblk0, but let's allow for some
        whitespace should the formatting change. */
     gchar *out = NULL;
-    gchar *cmd[] = {"sh", "-c", "grep 'mmcblk0\s*$' /proc/partitions", NULL};
+    gchar *cmd[] = {"sh", "-c", "grep 'mmcblk0\\s*$' /proc/partitions", NULL};
     g_spawn_sync(NULL, cmd, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
                           &out, NULL, NULL, NULL);
 
