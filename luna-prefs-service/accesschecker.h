@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2018 LG Electronics, Inc.
+// Copyright (c) 2015-2024 LG Electronics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 
 #include <luna-service2/lunaservice.h>
 
-typedef bool (*callbackType)(LSHandle*, LSMessage*, bool);
+typedef void (*callbackType)(LSHandle*, LSMessage*, bool);
 
 bool checkAccess(LSHandle * handle, LSMessage * message, const char *uri_to_check, callbackType callback);
 
